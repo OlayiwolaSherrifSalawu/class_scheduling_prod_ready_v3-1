@@ -1,6 +1,6 @@
 import { db, auth } from './firebase-config.js';
 import { Catalog } from './data.js';
-import { $, $$, toast, section, todayKey } from './ui.js';
+import { $, $$, toast, section, todayKey, mapView } from './ui.js';
 import {
   doc, getDoc, setDoc, collection, query, onSnapshot, getDocs, where
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -170,9 +170,7 @@ export function lecturerDashboardView(user) {
       if (tab === 'home') content.append(overviewSection());
       if (tab === 'registration') mountRegistration(content, user);
       if (tab === 'notifications') mountNotifications(content, user);
-      if (tab === 'map') {
-        fetch('map.html').then(res => res.text()).then(html => content.innerHTML = html);
-      }
+      if (tab === 'map') content.append(mapView());
     }
   });
 
