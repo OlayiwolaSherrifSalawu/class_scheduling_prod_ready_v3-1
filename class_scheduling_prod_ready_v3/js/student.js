@@ -101,6 +101,7 @@ export function studentDashboardView(user) {
       <button class="btn" data-tab="home">Dashboard</button>
       <button class="btn" data-tab="registration">Registration®️</button>
       <button class="btn" data-tab="notifications">Notifications🔔</button>
+      <button class="btn" data-tab="map">Venue Map🗺️</button>
     </div>
     <div class="small" style="margin-top:10px">
       Signed in as <b>${user.displayName || user.email}</b>
@@ -133,6 +134,9 @@ export function studentDashboardView(user) {
       if (tab === 'home') content.append(overviewSection());
       if (tab === 'registration') mountRegistration(content, user);
       if (tab === 'notifications') mountNotifications(content, user);
+      if (tab === 'map') {
+        fetch('map.html').then(res => res.text()).then(html => content.innerHTML = html);
+      }
     }
   });
 

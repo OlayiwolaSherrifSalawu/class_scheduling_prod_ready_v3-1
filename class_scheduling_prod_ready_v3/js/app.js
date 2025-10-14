@@ -278,6 +278,9 @@ async function route(){
   if(hash==='about') return aboutView();
   if(hash==='signup') return signupView();
   if(hash==='signin') return signinView();
+  if(hash==='map'){
+    return fetch('map.html').then(res=>res.text()).then(html=>view.innerHTML=html);
+  }
 
   if(hash==='lecturer'){
     if(!user){ routePush('signin'); return; }
