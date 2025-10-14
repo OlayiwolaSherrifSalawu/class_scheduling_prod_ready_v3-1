@@ -1,4 +1,4 @@
-import { initTheme, setTheme, toast, routePush } from './ui.js';
+import { initTheme, setTheme, toast, routePush, mapView } from './ui.js';
 import { signupUser, signinUser, signoutUser, listenAuth } from './auth.js';
 import { auth, db } from './firebase-config.js';
 import { Departments, Levels } from './data.js';
@@ -278,8 +278,10 @@ async function route(){
   if(hash==='about') return aboutView();
   if(hash==='signup') return signupView();
   if(hash==='signin') return signinView();
-  if(hash==='map'){
-    return fetch('map.html').then(res=>res.text()).then(html=>view.innerHTML=html);
+  if(hash==='map') {
+    view.innerHTML = '';
+    view.append(mapView());
+    return;
   }
 
   if(hash==='lecturer'){

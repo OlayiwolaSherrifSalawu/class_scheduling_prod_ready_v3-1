@@ -37,3 +37,40 @@ export function section(title, inner){
   s.innerHTML = `<h2>${title}</h2>${inner}`;
   return s;
 }
+
+export function mapView() {
+  const container = document.createElement('div');
+  container.className = 'card';
+  container.innerHTML = `
+    <h2>Venue Map</h2>
+    <p>Find the location of your lecture venues on campus.</p>
+    <div id="map" style="height: 500px; width: 100%;"></div>
+  `;
+
+  // We need to wait a moment for the container to be added to the DOM
+  // before initializing the map.
+  setTimeout(() => {
+    // Check if the map container is in the document
+    if (!document.getElementById('map')) return;
+
+    const map = L.map('map').setView([7.85944, 6.68361], 15);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    const venues = [
+      { name: 'FSLT 1', lat: 7.860, lon: 6.684, description: 'Faculty of Science Lecture Theatre 1' },
+      { name: 'Lecture Hall A', lat: 7.858, lon: 6.682, description: 'Main Lecture Hall A' },
+      { name: 'University Library', lat: 7.859, lon: 6.685, description: 'University Main Library' },
+      { name: 'Admin Block', lat: 7.861, lon: 6.683, description: 'Administrative Building' }
+    ];
+
+    venues.forEach(venue => {
+      const marker = L.marker([venue.lat, venue.lon]).addTo(map);
+      marker.bindPopup(`<b>${venue.name}</b><br>${venue.description}`);
+    });
+  }, 100);
+
+  return container;
+}
