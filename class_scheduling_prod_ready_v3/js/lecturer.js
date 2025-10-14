@@ -411,138 +411,148 @@ async function renderCoursesAndSchedule(s, user, levels) {
   });
 }
 
-function mountNotifications(root, user) {
+async function mountNotifications(root, user) {
   const s = section("Today's Classes", `<div id="lecturerNotiList"></div>`);
   root.append(s);
 
-  getDoc(doc(db, 'lecturerProfiles', user.uid)).then(profSnap => {
-    const prof = profSnap.data() || {};
-    prof.schedule = normalizeSchedule(prof.schedule);
+  const profSnap = await getDoc(doc(db, 'lecturerProfiles', user.uid));
+  const prof = profSnap.data() || {};
+  prof.schedule = normalizeSchedule(prof.schedule);
 
-    if (!prof.courses?.length) {
-      $('#lecturerNotiList', s).innerHTML = '<div class="small">No courses found. Please register first.</div>';
-      return;
+  if (!prof.courses?.length) {
+    $('#lecturerNotiList', s).innerHTML = '<div class="small">No courses found. Please register first.</div>';
+    return;
+  }
+
+  const userRole = (await getDoc(doc(db, 'users', user.uid))).data()?.role || '';
+  if (!['lecturer', 'admin'].includes(userRole)) {
+    $('#lecturerNotiList', s).innerHTML = '<div class="small">You do not have permission to manage sessions.</div>';
+    return;
+  }
+
+  // --- Proactively create sessions for the next 7 days ---
+  try {
+    const dates = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      dates.push(todayKey(d));
     }
 
-    const listEl = $('#lecturerNotiList', s);
-    const today = todayKey();
-    const todayWeekday = weekdayName(new Date().getDay()).toLowerCase();
+    const sessionsSnap = await getDocs(query(
+      collection(db, 'classSessions'),
+      where('lecturer', '==', user.uid),
+      where('date', 'in', dates)
+    ));
+    const existingSessions = new Set(sessionsSnap.docs.map(d => d.id));
 
-    const unsub = onSnapshot(
-      query(
-        collection(db, 'classSessions'),
-        where('lecturer', '==', user.uid),
-        where('date', '==', today)
-      ),
-      async (qs) => {
-        const rows = [];
-        const userRole = (await getDoc(doc(db, 'users', user.uid))).data()?.role || '';
+    for (let i = 0; i < 7; i++) {
+      const dateObj = new Date();
+      dateObj.setDate(dateObj.getDate() + i);
+      const dateStr = todayKey(dateObj);
+      const weekday = weekdayName(dateObj.getDay()).toLowerCase();
 
-        if (!['lecturer', 'admin'].includes(userRole)) {
-          listEl.innerHTML = '<div class="small">You do not have permission to manage sessions.</div>';
-          return;
-        }
+      const counts = {};
+      for (const sch of (prof.schedule || [])) {
+        if (!sch) continue;
+        const schDay = String(sch.day || '').toLowerCase();
+        if (prof.courses.includes(sch.course) && schDay === weekday) {
+          counts[sch.course] = (counts[sch.course] || 0) + 1;
+          const occurrence = counts[sch.course] - 1; // 0-based
+          const newId = `${user.uid}_${sch.course}_${dateStr}_${occurrence}`;
 
-        qs.forEach(docSnap => {
-          const v = docSnap.data();
-          // only include classSessions that match today's weekday (and course in profile)
-          if (prof.courses.includes(v.course) && String(v.day || '').toLowerCase() === todayWeekday) {
-            rows.push({ id: docSnap.id, ...v });
-          }
-        });
-
-        // For each scheduled session in the lecturer profile that falls on today's weekday,
-        // ensure a classSession exists for today (avoid duplicates)
-        // Use index in prof.schedule for uniqueness when multiple sessions per course
-        for (let i = 0, counts = {}; i < (prof.schedule || []).length; i++) {
-          const sch = prof.schedule[i];
-          if (!sch) continue;
-          const schDay = String(sch.day || '').toLowerCase();
-          if (prof.courses.includes(sch.course) && schDay === todayWeekday) {
-            // compute occurrence index for this course up to position i
-            counts[sch.course] = (counts[sch.course] || 0) + 1;
-            const occurrence = counts[sch.course] - 1; // 0-based
-            const newId = `${user.uid}_${sch.course}_${today}_${occurrence}`;
-            const exists = rows.find(r => r.id === newId || (r.course === sch.course && r.time === sch.time && r.venue === sch.venue && String(r.day || '').toLowerCase() === todayWeekday));
-            if (!exists && ['lecturer', 'admin'].includes(userRole)) {
-              await setDoc(doc(db, 'classSessions', newId), {
-                course: sch.course,
-                time: sch.time || '',
-                venue: sch.venue || '',
-                day: sch.day || '',
-                date: today,
-                lecturer: user.uid,
-                confirmed: null
-              }, { merge: true });
-              rows.push({ id: newId, course: sch.course, time: sch.time, venue: sch.venue, day: sch.day });
-            }
+          if (!existingSessions.has(newId)) {
+            await setDoc(doc(db, 'classSessions', newId), {
+              course: sch.course,
+              time: sch.time || '',
+              venue: sch.venue || '',
+              day: sch.day || '',
+              date: dateStr,
+              lecturer: user.uid,
+              confirmed: null
+            }, { merge: true });
           }
         }
+      }
+    }
+  } catch (err) {
+    console.error("Error creating upcoming sessions:", err);
+    toast("Could not prepare upcoming class schedule.", "error");
+  }
+  // --- End of proactive creation ---
 
-        if (!rows.length) {
-          listEl.innerHTML = '<div class="small">No classes for today.</div>';
-        } else {
-          listEl.innerHTML = rows.map(r => `
-            <div class="card">
-              <b>${r.course}</b> — ${r.day || ''}${r.day ? ', ' : ''}${r.time || 'No time set'} @ ${r.venue || 'No venue'}${r.private ? ' (Private)' : ''}
-              <div>
-                <button class="btn btn-ok" data-yes="${r.id}">Yes</button>
-                <button class="btn btn-error" data-no="${r.id}">No</button>
-              </div>
+  const listEl = $('#lecturerNotiList', s);
+  const today = todayKey();
+
+  const unsub = onSnapshot(
+    query(
+      collection(db, 'classSessions'),
+      where('lecturer', '==', user.uid),
+      where('date', '==', today)
+    ),
+    (qs) => {
+      const rows = [];
+      qs.forEach(docSnap => {
+        rows.push({ id: docSnap.id, ...docSnap.data() });
+      });
+
+      if (!rows.length) {
+        listEl.innerHTML = '<div class="small">No classes scheduled for today.</div>';
+      } else {
+        listEl.innerHTML = rows.map(r => `
+          <div class="card">
+            <b>${r.course}</b> — ${r.day || ''}${r.day ? ', ' : ''}${r.time || 'No time set'} @ ${r.venue || 'No venue'}${r.private ? ' (Private)' : ''}
+            <div>
+              <button class="btn btn-ok" data-yes="${r.id}" ${r.confirmed === true ? 'disabled' : ''}>Yes</button>
+              <button class="btn btn-error" data-no="${r.id}" ${r.confirmed === false ? 'disabled' : ''}>No</button>
             </div>
-          `).join('');
-        }
+          </div>
+        `).join('');
       }
-    );
-
-    // remove subscription when section is removed
-    const observer = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        m.removedNodes.forEach(node => {
-          if (node === s) {
-            unsub();
-            observer.disconnect();
-          }
-        });
-      }
-    });
-    if (s.parentNode) {
-      observer.observe(s.parentNode, { childList: true });
     }
+  );
 
-    // Buttons yes/no handler
-    listEl.addEventListener('click', async (e) => {
-      const userRole = (await getDoc(doc(db, 'users', user.uid))).data()?.role || '';
-      if (!['lecturer', 'admin'].includes(userRole)) {
-        toast('Permission denied.', 'error');
-        return;
-      }
+  // remove subscription when section is removed
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      m.removedNodes.forEach(node => {
+        if (node === s) {
+          unsub();
+          observer.disconnect();
+        }
+      });
+    }
+  });
+  if (s.parentNode) {
+    observer.observe(s.parentNode, { childList: true });
+  }
 
-      if (e.target.dataset.yes) {
-        const docSnap = await getDoc(doc(db, 'classSessions', e.target.dataset.yes));
-        if (docSnap.exists() && (docSnap.data().lecturer === user.uid || userRole === 'admin')) {
-          await setDoc(doc(db, 'classSessions', e.target.dataset.yes), {
-            confirmed: true,
-            lecturer: user.uid
-          }, { merge: true });
-          toast('Marked as YES', 'ok');
-        } else {
-          toast('You are not allowed to update this session.', 'error');
-        }
+  // Buttons yes/no handler
+  listEl.addEventListener('click', async (e) => {
+    if (e.target.dataset.yes) {
+      const docSnap = await getDoc(doc(db, 'classSessions', e.target.dataset.yes));
+      if (docSnap.exists() && (docSnap.data().lecturer === user.uid || userRole === 'admin')) {
+        await setDoc(doc(db, 'classSessions', e.target.dataset.yes), {
+          confirmed: true,
+          lecturer: user.uid
+        }, { merge: true });
+        toast('Marked as YES', 'ok');
+      } else {
+        toast('You are not allowed to update this session.', 'error');
       }
-      if (e.target.dataset.no) {
-        const docSnap = await getDoc(doc(db, 'classSessions', e.target.dataset.no));
-        if (docSnap.exists() && (docSnap.data().lecturer === user.uid || userRole === 'admin')) {
-          await setDoc(doc(db, 'classSessions', e.target.dataset.no), {
-            confirmed: false,
-            lecturer: user.uid
-          }, { merge: true });
-          toast('Marked as NO', 'error');
-        } else {
-          toast('You are not allowed to update this session.', 'error');
-        }
+    }
+    if (e.target.dataset.no) {
+      const docSnap = await getDoc(doc(db, 'classSessions', e.target.dataset.no));
+      if (docSnap.exists() && (docSnap.data().lecturer === user.uid || userRole === 'admin')) {
+        await setDoc(doc(db, 'classSessions', e.target.dataset.no), {
+          confirmed: false,
+          lecturer: user.uid
+        }, { merge: true });
+        toast('Marked as NO', 'error');
+      } else {
+        toast('You are not allowed to update this session.', 'error');
       }
-    });
+    }
   });
 }
 
