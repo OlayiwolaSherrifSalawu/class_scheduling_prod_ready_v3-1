@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin Migration Dashboard</title>
+  <link rel="stylesheet" href="./css/style.css">
+  <style>
+    body { padding: 24px; max-width: 900px; margin: 0 auto; font-family: sans-serif; }
+    .card { padding: 16px; border-radius: 12px; background: var(--card,#fff); box-shadow: 0 8px 24px rgba(0,0,0,.08); margin-bottom: 20px; }
+    .muted { opacity:.8; font-size:.9rem; }
+    pre { background: rgba(0,0,0,.06); padding: 12px; border-radius: 10px; height: 320px; overflow:auto; }
+    .btn { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; background: #333; color: #fff; }
+    .btn-primary { background: #007bff; }
+    .btn + .btn { margin-left: 8px; }
+  </style>
+</head>
+<body>
+  <h2>Migration / Import Dashboard</h2>
+  <p class="muted">Admin-only utility for seeding Firestore collections (<code>courses</code>, <code>departments</code>, and <code>lecturerProfiles</code>).</p>
+
+  <div class="card">
+    <h3>Courses</h3>
+    <button id="importBtn" class="btn btn-primary">Import Courses</button>
+    <button id="dryRunBtn" class="btn">Dry-run</button>
+  </div>
+
+  <div class="card">
+    <h3>Departments</h3>
+    <button id="deptBtn" class="btn btn-primary">Import Departments</button>
+    <button id="deptDryBtn" class="btn">Dry-run</button>
+  </div>
+
+  <div class="card">
+    <h3>Lecturer Profiles</h3>
+    <button id="lectBtn" class="btn btn-primary">Init Lecturer Profiles</button>
+    <button id="lectDryBtn" class="btn">Dry-run</button>
+  </div>
+
+  <div class="card">
+    <h3>Logs</h3>
+    <pre id="log"></pre>
+  </div>
+
+  <script type="module">
+    import { auth, db } from './js/firebase-config.js';
+    import { Catalog, Departments } from './js/data.js';
+    import {
+      collection, addDoc, getDocs, query, where, setDoc, doc
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const ADMIN_EMAILS = ["victorakor04@gmail.com"]; // your admin email(s)
+
+    const logEl = document.getElementById('log');
+    function log(msg){ logEl.textContent += msg + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+
+    // restrict page access
+    auth.onAuthStateChanged(user => {
+      if(!user || !ADMIN_EMAILS.includes(user.email)){
+        document.body.innerHTML = "<h3 style='padding:24px'>Access denied</h3>";
+      }
+    });
+
+    // -------------------
+    // COURSES IMPORT
+    // -------------------
+    async function existsByCode(code){
+      const qy = query(collection(db,'courses'), where('code','==', code));
+      const snap = await getDocs(qy);
+      return !snap.empty;
+    }
+
+    async function importCourses({dry=false}={}) {
+      let added = 0, skipped = 0;
+      for(const dept in Catalog){
+        const courses = Catalog[dept];
+        for(const c of courses){
+          const code = c.code;
+          const department = String(dept).toLowerCase();
+          const level = Number(c.level)||0;
+          const name = c.name;
+          const units = Number(c.units)||2;
+
+          if(await existsByCode(code)){
+            skipped++; log(`Skip ${code} (exists)`);
+            continue;
+          }
+
+          if(dry){
+            log(`[dry] Would add ${code} - ${name}`);
+            continue;
+          }
+
+          await addDoc(collection(db,'courses'), { code, department, level, name, units });
+          added++; log(`Added ${code} - ${name}`);
+        }
+      }
+      if(!dry) log(`\nCourses done. Added: ${added}, Skipped: ${skipped}`);
+      else log("\nCourses dry-run complete.");
+    }
+
+    // -------------------
+    // DEPARTMENTS IMPORT
+    // -------------------
+    async function importDepartments({dry=false}={}) {
+      let added = 0;
+      for(const dept of Departments){
+        if(dry){
+          log(`[dry] Would add department: ${dept}`);
+          continue;
+        }
+        await addDoc(collection(db, 'departments'), { name: dept });
+        added++; log(`Added department: ${dept}`);
+      }
+      if(!dry) log(`\nDepartments done. Added: ${added}`);
+      else log("\nDepartments dry-run complete.");
+    }
+
+    // -------------------
+    // LECTURER PROFILES INIT
+    // -------------------
+    async function initLecturerProfiles({dry=false}={}) {
+      const usersSnap = await getDocs(collection(db,'users'));
+      let ensured = 0;
+      for(const u of usersSnap.docs){
+        const data = u.data();
+        if(data.role === 'lecturer'){
+          const uid = u.id;
+          if(dry){
+            log(`[dry] Would ensure profile for lecturer: ${data.email||uid}`);
+            continue;
+          }
+          await setDoc(doc(db,'lecturerProfiles', uid), {
+            uid,
+            department: data.department || "",
+            levelsTaking: [],
+            courses: [],
+            schedule: []
+          }, { merge:true });
+          ensured++;
+          log(`Profile ensured for lecturer: ${data.email||uid}`);
+        }
+      }
+      if(!dry) log(`\nLecturer profiles done. Ensured: ${ensured}`);
+      else log("\nLecturer profiles dry-run complete.");
+    }
+
+    // -------------------
+    // BUTTON HOOKS
+    // -------------------
+    document.getElementById('importBtn').addEventListener('click', ()=> importCourses().catch(e=>log('Error: '+e.message)));
+    document.getElementById('dryRunBtn').addEventListener('click', ()=> importCourses({dry:true}).catch(e=>log('Error: '+e.message)));
+
+    document.getElementById('deptBtn').addEventListener('click', ()=> importDepartments().catch(e=>log('Error: '+e.message)));
+    document.getElementById('deptDryBtn').addEventListener('click', ()=> importDepartments({dry:true}).catch(e=>log('Error: '+e.message)));
+
+    document.getElementById('lectBtn').addEventListener('click', ()=> initLecturerProfiles().catch(e=>log('Error: '+e.message)));
+    document.getElementById('lectDryBtn').addEventListener('click', ()=> initLecturerProfiles({dry:true}).catch(e=>log('Error: '+e.message)));
+  </script>
+</body>
+</html>
